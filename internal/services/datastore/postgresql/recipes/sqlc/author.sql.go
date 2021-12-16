@@ -5,6 +5,7 @@ package db
 
 import (
 	"context"
+	"time"
 )
 
 const createAuthor = `-- name: CreateAuthor :one
@@ -105,18 +106,25 @@ func (q *Queries) ListAuthors(ctx context.Context, arg ListAuthorsParams) ([]Aut
 }
 
 const updateAuthor = `-- name: UpdateAuthor :one
-UPDATE authors SET email = $2
+UPDATE authors SET (email, hashed_password, updated_at) = ($2, $3, $4)
 WHERE username = $1
 RETURNING username, hashed_password, email, created_at, updated_at
 `
 
 type UpdateAuthorParams struct {
-	Username string `json:"username"`
-	Email    string `json:"email"`
+	Username       string    `json:"username"`
+	Email          string    `json:"email"`
+	HashedPassword string    `json:"hashed_password"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 func (q *Queries) UpdateAuthor(ctx context.Context, arg UpdateAuthorParams) (Author, error) {
-	row := q.db.QueryRowContext(ctx, updateAuthor, arg.Username, arg.Email)
+	row := q.db.QueryRowContext(ctx, updateAuthor,
+		arg.Username,
+		arg.Email,
+		arg.HashedPassword,
+		arg.UpdatedAt,
+	)
 	var i Author
 	err := row.Scan(
 		&i.Username,

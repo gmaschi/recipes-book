@@ -5,6 +5,7 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/lib/pq"
 )
@@ -110,24 +111,24 @@ func (q *Queries) ListRecipes(ctx context.Context, arg ListRecipesParams) ([]Rec
 }
 
 const updateRecipe = `-- name: UpdateRecipe :one
-UPDATE recipes SET (author, ingredients, steps) = ($2, $3, $4)
+UPDATE recipes SET (ingredients, steps, updated_at) = ($2, $3, $4)
 WHERE id = $1
 RETURNING id, author, ingredients, steps, created_at, updated_at
 `
 
 type UpdateRecipeParams struct {
-	ID          int64    `json:"id"`
-	Author      string   `json:"author"`
-	Ingredients []string `json:"ingredients"`
-	Steps       []string `json:"steps"`
+	ID          int64     `json:"id"`
+	Ingredients []string  `json:"ingredients"`
+	Steps       []string  `json:"steps"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 func (q *Queries) UpdateRecipe(ctx context.Context, arg UpdateRecipeParams) (Recipe, error) {
 	row := q.db.QueryRowContext(ctx, updateRecipe,
 		arg.ID,
-		arg.Author,
 		pq.Array(arg.Ingredients),
 		pq.Array(arg.Steps),
+		arg.UpdatedAt,
 	)
 	var i Recipe
 	err := row.Scan(

@@ -17,7 +17,7 @@ LIMIT $1
     OFFSET $2;
 
 -- name: UpdateRecipe :one
-UPDATE recipes SET (author, ingredients, steps) = ($2, $3, $4)
+UPDATE recipes SET (ingredients, steps, updated_at) = ($2, $3, $4)
 WHERE id = $1
 RETURNING *;
 

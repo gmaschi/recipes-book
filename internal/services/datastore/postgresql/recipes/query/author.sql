@@ -17,7 +17,7 @@ LIMIT $1
 OFFSET $2;
 
 -- name: UpdateAuthor :one
-UPDATE authors SET email = $2
+UPDATE authors SET (email, hashed_password, updated_at) = ($2, $3, $4)
 WHERE username = $1
 RETURNING *;
 
