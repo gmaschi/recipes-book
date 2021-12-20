@@ -6,6 +6,7 @@ import (
 	recipeModel "github.com/gmaschi/go-recipes-book/internal/models/recipe"
 	db "github.com/gmaschi/go-recipes-book/internal/services/datastore/postgresql/recipes/sqlc"
 	"github.com/gmaschi/go-recipes-book/pkg/tools/parseErrors"
+	"github.com/lib/pq"
 	"net/http"
 	"time"
 )
@@ -30,6 +31,11 @@ func (c *Controller) Create(ctx *gin.Context) {
 		return
 	}
 
+	if len(req.Ingredients) == 0 || len(req.Steps) == 0 {
+		ctx.JSON(http.StatusBadRequest, "There should be at least one step and one ingredient per recipe")
+		return
+	}
+
 	createArgs := db.CreateRecipeParams{
 		Author:      req.Author,
 		Ingredients: req.Ingredients,
@@ -38,16 +44,18 @@ func (c *Controller) Create(ctx *gin.Context) {
 
 	recipe, err := c.store.CreateRecipe(ctx, createArgs)
 	if err != nil {
+		if pqErr, ok := err.(*pq.Error); ok {
+			switch pqErr.Code.Name() {
+			case "foreign_key_violation":
+				ctx.JSON(http.StatusForbidden, parseErrors.ErrorResponse(pqErr))
+				return
+			}
+		}
 		ctx.JSON(http.StatusInternalServerError, parseErrors.ErrorResponse(err))
 		return
 	}
 
-	res := recipeModel.CreateResponse{
-		Author:      recipe.Author,
-		Ingredients: recipe.Ingredients,
-		Steps:       recipe.Steps,
-		CreatedAt:   recipe.CreatedAt,
-	}
+	res := recipeModel.CreateResponse(recipe)
 	ctx.JSON(http.StatusOK, res)
 }
 
@@ -70,13 +78,7 @@ func (c *Controller) Recipe(ctx *gin.Context) {
 		return
 	}
 
-	res := recipeModel.GetResponse{
-		Author:      recipe.Author,
-		Steps:       recipe.Steps,
-		Ingredients: recipe.Ingredients,
-		CreatedAt:   recipe.CreatedAt,
-		UpdatedAt:   recipe.UpdatedAt,
-	}
+	res := recipeModel.GetResponse(recipe)
 
 	ctx.JSON(http.StatusOK, res)
 }
@@ -122,13 +124,7 @@ func (c *Controller) Update(ctx *gin.Context) {
 		return
 	}
 
-	res := recipeModel.UpdateResponse{
-		Author:      updatedRecipe.Author,
-		Steps:       updatedRecipe.Steps,
-		Ingredients: updatedRecipe.Ingredients,
-		CreatedAt:   updatedRecipe.CreatedAt,
-		UpdatedAt:   updatedRecipe.UpdatedAt,
-	}
+	res := recipeModel.UpdateResponse(updatedRecipe)
 
 	ctx.JSON(http.StatusOK, res)
 }
@@ -161,7 +157,7 @@ func (c *Controller) List(ctx *gin.Context) {
 	}
 
 	listArgs := db.ListRecipesParams{
-		Limit: req.PageSize,
+		Limit:  req.PageSize,
 		Offset: req.PageSize * (req.PageID - 1),
 	}
 
@@ -178,13 +174,7 @@ func (c *Controller) List(ctx *gin.Context) {
 	k := len(recipes)
 	res := make([]recipeModel.ListResponse, 0, k)
 	for _, recipe := range recipes {
-		res = append(res, recipeModel.ListResponse{
-			Author: recipe.Author,
-			Steps: recipe.Steps,
-			Ingredients: recipe.Ingredients,
-			CreatedAt: recipe.CreatedAt,
-			UpdatedAt: recipe.UpdatedAt,
-		})
+		res = append(res, recipeModel.ListResponse(recipe))
 	}
 
 	ctx.JSON(http.StatusOK, res)

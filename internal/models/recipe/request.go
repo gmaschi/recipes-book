@@ -8,7 +8,7 @@ type (
 	}
 
 	GetRequest struct {
-		ID int64 `uri:"id" binding:"required"`
+		ID int64 `uri:"id" binding:"required,min=1"`
 	}
 
 	UpdateRequest struct {
@@ -18,7 +18,7 @@ type (
 	}
 
 	DeleteRequest struct {
-		ID int64 `uri:"id" binding:"required"`
+		ID int64 `uri:"id" binding:"required,min=1"`
 	}
 
 	ListRequest struct {

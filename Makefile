@@ -29,6 +29,6 @@ server:
 	go run cmd/recipesBook/main.go
 
 mock:
-	mockgen -package mockdb -destination db/mock/store.go github.com/gmaschi/go-recipes-book/db/sqlc Store
+	mockgen -package mockedstore -destination internal/mocks/datastore/postgresql/recipes/mockedStore.go github.com/gmaschi/go-recipes-book/internal/services/datastore/postgresql/recipes/sqlc Store
 
 .PHONY: postgres createdb dropdb migrateup migrateup1 migratedown migratedown1 sqlc test server mock

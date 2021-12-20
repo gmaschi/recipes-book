@@ -2,7 +2,7 @@ package main
 
 import (
 	"database/sql"
-	"github.com/gmaschi/go-recipes-book/internal/factories"
+	"github.com/gmaschi/go-recipes-book/internal/factories/book-recipe-factory"
 	db "github.com/gmaschi/go-recipes-book/internal/services/datastore/postgresql/recipes/sqlc"
 	"log"
 )
@@ -19,7 +19,7 @@ func main() {
 		log.Fatalln("could not connect to database:", err)
 	}
 	store := db.NewStore(conn)
-	server := factories.New(store)
+	server := book_recipe_factory.New(store)
 
 	err = server.Start(serverAddress)
 	if err != nil {

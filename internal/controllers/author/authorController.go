@@ -59,8 +59,8 @@ func (c *Controller) Create(ctx *gin.Context) {
 		return
 	}
 
-	res := authorModel.CreateResponse{Username: author.Username, CreatedAt: author.CreatedAt}
-	ctx.JSON(http.StatusOK, res)
+	authorResponse := authorModel.CreateResponse(author)
+	ctx.JSON(http.StatusOK, authorResponse)
 }
 
 // Author handles the request to get an author based on the username
@@ -131,7 +131,7 @@ func (c *Controller) Update(ctx *gin.Context) {
 		updateArgs.UpdatedAt = now
 	}
 	if trimmedPassword != "" {
-		if !validators.Email(trimmedPassword) {
+		if !validators.Password(trimmedPassword) {
 			ctx.JSON(http.StatusBadRequest, map[string]interface{}{"error:": "Invalid password"})
 			return
 		}
@@ -157,12 +157,7 @@ func (c *Controller) Update(ctx *gin.Context) {
 		return
 	}
 
-	res := authorModel.UpdateResponse{
-		Username:  updatedAuthor.Username,
-		Email:     updatedAuthor.Email,
-		CreatedAt: updatedAuthor.CreatedAt,
-		UpdatedAt: updatedAuthor.UpdatedAt,
-	}
+	res := authorModel.UpdateResponse(updatedAuthor)
 
 	ctx.JSON(http.StatusOK, res)
 }
@@ -218,12 +213,7 @@ func (c *Controller) List(ctx *gin.Context) {
 	k := len(authors)
 	res := make([]authorModel.ListResponse, 0, k)
 	for _, author := range authors {
-		res = append(res, authorModel.ListResponse{
-			Username:  author.Username,
-			Email:     author.Email,
-			CreatedAt: author.CreatedAt,
-			UpdatedAt: author.UpdatedAt,
-		})
+		res = append(res, authorModel.ListResponse(author))
 	}
 
 	ctx.JSON(http.StatusOK, res)
