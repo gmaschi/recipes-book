@@ -5,10 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	authMiddleware "github.com/gmaschi/go-recipes-book/internal/controllers/middlewares/auth"
 	"github.com/gmaschi/go-recipes-book/internal/factories/book-recipe-factory"
 	mockedstore "github.com/gmaschi/go-recipes-book/internal/mocks/datastore/postgresql/recipes"
 	authorModel "github.com/gmaschi/go-recipes-book/internal/models/author"
 	db "github.com/gmaschi/go-recipes-book/internal/services/datastore/postgresql/recipes/sqlc"
+	"github.com/gmaschi/go-recipes-book/pkg/auth/tokenAuth"
+	"github.com/gmaschi/go-recipes-book/pkg/config/env"
 	"github.com/gmaschi/go-recipes-book/pkg/tools/password"
 	"github.com/gmaschi/go-recipes-book/pkg/tools/random"
 	"github.com/golang/mock/gomock"
@@ -80,7 +83,7 @@ func EqUpdateAuthorParams(arg db.UpdateAuthorParams, updatedPassword string) gom
 }
 
 func TestCreate(t *testing.T) {
-	author, password := randomAuthor(t)
+	author, randomPassword := randomAuthor(t)
 
 	testCases := []struct {
 		name          string
@@ -92,7 +95,7 @@ func TestCreate(t *testing.T) {
 			name: "OK",
 			body: map[string]interface{}{
 				"username": author.Username,
-				"password": password,
+				"password": randomPassword,
 				"email":    author.Email,
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
@@ -101,7 +104,7 @@ func TestCreate(t *testing.T) {
 					Email:    author.Email,
 				}
 				store.EXPECT().
-					CreateAuthor(gomock.Any(), EqCreateAuthorParams(arg, password)).
+					CreateAuthor(gomock.Any(), EqCreateAuthorParams(arg, randomPassword)).
 					Times(1).
 					Return(author, nil)
 			},
@@ -114,7 +117,7 @@ func TestCreate(t *testing.T) {
 			name: "InvalidEmail",
 			body: map[string]interface{}{
 				"username": author.Username,
-				"password": password,
+				"password": randomPassword,
 				"email":    "invalid-email",
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
@@ -129,8 +132,8 @@ func TestCreate(t *testing.T) {
 		{
 			name: "InvalidUsername",
 			body: map[string]interface{}{
-				"username": "inavlid-username#",
-				"password": password,
+				"username": "invalid-username#",
+				"password": randomPassword,
 				"email":    author.Email,
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
@@ -162,7 +165,7 @@ func TestCreate(t *testing.T) {
 			name: "InternalError",
 			body: map[string]interface{}{
 				"username": author.Username,
-				"password": password,
+				"password": randomPassword,
 				"email":    author.Email,
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
@@ -179,7 +182,7 @@ func TestCreate(t *testing.T) {
 			name: "ExistingUsername",
 			body: map[string]interface{}{
 				"username": author.Username,
-				"password": password,
+				"password": randomPassword,
 				"email":    author.Email,
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
@@ -204,8 +207,10 @@ func TestCreate(t *testing.T) {
 			tc.buildStubs(store)
 
 			// start test server and send request
-			//server := newTestServer(t, store)
-			server := book_recipe_factory.New(store)
+			config := env.NewConfig(random.String(32), time.Minute)
+
+			server, err := bookRecipeFactory.New(config, store)
+			require.NoError(t, err)
 			recorder := httptest.NewRecorder()
 
 			data, err := json.Marshal(tc.body)
@@ -246,7 +251,7 @@ func TestAuthor(t *testing.T) {
 		},
 		{
 			name:           "BadRequest",
-			authorUsername: "inavlid-username#",
+			authorUsername: "invalid-username#",
 			buildStubs: func(store *mockedstore.MockStore) {
 				store.EXPECT().
 					GetAuthor(gomock.Any(), gomock.Eq(author.Username)).
@@ -292,7 +297,10 @@ func TestAuthor(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			server := book_recipe_factory.New(store)
+			config := env.NewConfig(random.String(32), time.Minute)
+
+			server, err := bookRecipeFactory.New(config, store)
+			require.NoError(t, err)
 			recorder := httptest.NewRecorder()
 
 			url := fmt.Sprintf("/authors/%s", tc.authorUsername)
@@ -324,6 +332,7 @@ func TestUpdate(t *testing.T) {
 	testCases := []struct {
 		name          string
 		body          map[string]interface{}
+		setupAuth     func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker)
 		buildStubs    func(store *mockedstore.MockStore)
 		checkResponse func(t *testing.T, recorder *httptest.ResponseRecorder)
 	}{
@@ -333,6 +342,9 @@ func TestUpdate(t *testing.T) {
 				"username": author.Username,
 				"email":    updatedEmail,
 				"password": updatedPassword,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, author.Username, time.Minute)
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				updateArgs := db.UpdateAuthorParams{
@@ -355,11 +367,66 @@ func TestUpdate(t *testing.T) {
 			},
 		},
 		{
+			name: "NoAuthorization",
+			body: map[string]interface{}{
+				"username": author.Username,
+				"email":    updatedEmail,
+				"password": updatedPassword,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {},
+			buildStubs: func(store *mockedstore.MockStore) {
+				updateArgs := db.UpdateAuthorParams{
+					Username:  author.Username,
+					Email:     updatedEmail,
+					UpdatedAt: updatedTime,
+				}
+				store.EXPECT().
+					GetAuthor(gomock.Any(), gomock.Eq(author.Username)).
+					Times(0)
+				store.EXPECT().
+					UpdateAuthor(gomock.Any(), EqUpdateAuthorParams(updateArgs, updatedPassword)).
+					Times(0)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			},
+		},
+		{
+			name: "UnauthorizedUser",
+			body: map[string]interface{}{
+				"username": author.Username,
+				"email":    updatedEmail,
+				"password": updatedPassword,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, "unauthorizedUser", time.Minute)
+			},
+			buildStubs: func(store *mockedstore.MockStore) {
+				updateArgs := db.UpdateAuthorParams{
+					Username:  author.Username,
+					Email:     updatedEmail,
+					UpdatedAt: updatedTime,
+				}
+				store.EXPECT().
+					GetAuthor(gomock.Any(), gomock.Eq(author.Username)).
+					Times(0)
+				store.EXPECT().
+					UpdateAuthor(gomock.Any(), EqUpdateAuthorParams(updateArgs, updatedPassword)).
+					Times(0)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			},
+		},
+		{
 			name: "InvalidUsername",
 			body: map[string]interface{}{
 				"username": "invalid-username#",
 				"email":    updatedEmail,
 				"password": updatedPassword,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, author.Username, time.Minute)
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				store.EXPECT().
@@ -376,6 +443,9 @@ func TestUpdate(t *testing.T) {
 				"username": author.Username,
 				"email":    "invalid-email",
 				"password": updatedPassword,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, author.Username, time.Minute)
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				updateArgs := db.UpdateAuthorParams{
@@ -402,6 +472,9 @@ func TestUpdate(t *testing.T) {
 				"email":    updatedEmail,
 				"password": "367",
 			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, author.Username, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				updateArgs := db.UpdateAuthorParams{
 					Username:  author.Username,
@@ -426,6 +499,9 @@ func TestUpdate(t *testing.T) {
 				"username": author.Username,
 				"email":    updatedEmail,
 				"password": updatedPassword,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, author.Username, time.Minute)
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				updateArgs := db.UpdateAuthorParams{
@@ -452,6 +528,9 @@ func TestUpdate(t *testing.T) {
 				"email":    updatedEmail,
 				"password": updatedPassword,
 			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, author.Username, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				updateArgs := db.UpdateAuthorParams{
 					Username:  author.Username,
@@ -476,6 +555,9 @@ func TestUpdate(t *testing.T) {
 				"username": author.Username,
 				"email":    updatedEmail,
 				"password": updatedPassword,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, author.Username, time.Minute)
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				updateArgs := db.UpdateAuthorParams{
@@ -502,6 +584,9 @@ func TestUpdate(t *testing.T) {
 				"username": author.Username,
 				"email":    updatedEmail,
 				"password": updatedPassword,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, author.Username, time.Minute)
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				updateArgs := db.UpdateAuthorParams{
@@ -532,8 +617,10 @@ func TestUpdate(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			server := book_recipe_factory.New(store)
+			config := env.NewConfig(random.String(32), time.Minute)
 
+			server, err := bookRecipeFactory.New(config, store)
+			require.NoError(t, err)
 			recorder := httptest.NewRecorder()
 
 			data, err := json.Marshal(tc.body)
@@ -543,6 +630,7 @@ func TestUpdate(t *testing.T) {
 			req, err := http.NewRequest(http.MethodPatch, url, bytes.NewReader(data))
 			require.NoError(t, err)
 
+			tc.setupAuth(t, req, server.TokenAuth)
 			server.Router.ServeHTTP(recorder, req)
 			tc.checkResponse(t, recorder)
 		})
@@ -555,12 +643,16 @@ func TestDelete(t *testing.T) {
 	testCases := []struct {
 		name           string
 		authorUsername string
+		setupAuth      func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker)
 		buildStubs     func(store *mockedstore.MockStore)
 		checkResponse  func(t *testing.T, recorder *httptest.ResponseRecorder)
 	}{
 		{
 			name:           "OK",
 			authorUsername: author.Username,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, author.Username, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				store.EXPECT().
 					DeleteAuthor(gomock.Any(), gomock.Eq(author.Username)).
@@ -572,8 +664,39 @@ func TestDelete(t *testing.T) {
 			},
 		},
 		{
+			name:           "NoAuthorization",
+			authorUsername: author.Username,
+			setupAuth:      func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {},
+			buildStubs: func(store *mockedstore.MockStore) {
+				store.EXPECT().
+					DeleteAuthor(gomock.Any(), gomock.Eq(author.Username)).
+					Times(0)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			},
+		},
+		{
+			name:           "UnauthorizedUser",
+			authorUsername: author.Username,
+			setupAuth:      func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, "unauthorizedUser", time.Minute)
+			},
+			buildStubs: func(store *mockedstore.MockStore) {
+				store.EXPECT().
+					DeleteAuthor(gomock.Any(), gomock.Eq(author.Username)).
+					Times(0)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			},
+		},
+		{
 			name:           "InvalidUsername",
-			authorUsername: "inavlid-username#",
+			authorUsername: "invalid-username#",
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, author.Username, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				store.EXPECT().
 					DeleteAuthor(gomock.Any(), gomock.Eq(author.Username)).
@@ -586,6 +709,9 @@ func TestDelete(t *testing.T) {
 		{
 			name:           "ForeignKeyViolation",
 			authorUsername: author.Username,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, author.Username, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				store.EXPECT().
 					DeleteAuthor(gomock.Any(), gomock.Eq(author.Username)).
@@ -599,6 +725,9 @@ func TestDelete(t *testing.T) {
 		{
 			name:           "InternalServerError",
 			authorUsername: author.Username,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, author.Username, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				store.EXPECT().
 					DeleteAuthor(gomock.Any(), gomock.Eq(author.Username)).
@@ -619,7 +748,10 @@ func TestDelete(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			server := book_recipe_factory.New(store)
+			config := env.NewConfig(random.String(32), time.Minute)
+
+			server, err := bookRecipeFactory.New(config, store)
+			require.NoError(t, err)
 			recorder := httptest.NewRecorder()
 
 			url := fmt.Sprintf("/authors/%s", tc.authorUsername)
@@ -627,6 +759,7 @@ func TestDelete(t *testing.T) {
 			req, err := http.NewRequest(http.MethodDelete, url, nil)
 			require.NoError(t, err)
 
+			tc.setupAuth(t, req, server.TokenAuth)
 			server.Router.ServeHTTP(recorder, req)
 			tc.checkResponse(t, recorder)
 		})
@@ -763,7 +896,10 @@ func TestList(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			server := book_recipe_factory.New(store)
+			config := env.NewConfig(random.String(32), time.Minute)
+
+			server, err := bookRecipeFactory.New(config, store)
+			require.NoError(t, err)
 			recorder := httptest.NewRecorder()
 
 			url := fmt.Sprintf("/authors?page_id=%v&page_size=%v", tc.paginationData.pageID, tc.paginationData.pageSize)
@@ -882,4 +1018,19 @@ func requireBodyMatchListAuthors(t *testing.T, body *bytes.Buffer, authors []db.
 		require.Equal(t, expectedAuthorsModel[i].CreatedAt, author.CreatedAt)
 		require.Equal(t, expectedAuthorsModel[i].UpdatedAt, author.UpdatedAt)
 	}
+}
+
+func addAuthorization(
+	t *testing.T,
+	request *http.Request,
+	tokenMaker tokenAuth.Maker,
+	authorizationType string,
+	username string,
+	duration time.Duration,
+) {
+	token, err := tokenMaker.CreateToken(username, duration)
+	require.NoError(t, err)
+
+	authorizationHeader := fmt.Sprintf("%s %s", authorizationType, token)
+	request.Header.Set(authMiddleware.AuthorizationHeaderKey, authorizationHeader)
 }

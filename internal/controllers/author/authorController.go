@@ -2,9 +2,14 @@ package authorController
 
 import (
 	"database/sql"
+	"errors"
 	"github.com/gin-gonic/gin"
+	authMiddleware "github.com/gmaschi/go-recipes-book/internal/controllers/middlewares/auth"
 	authorModel "github.com/gmaschi/go-recipes-book/internal/models/author"
 	db "github.com/gmaschi/go-recipes-book/internal/services/datastore/postgresql/recipes/sqlc"
+	"github.com/gmaschi/go-recipes-book/pkg/auth/tokenAuth"
+	pasetoToken "github.com/gmaschi/go-recipes-book/pkg/auth/tokenAuth/paseto"
+	"github.com/gmaschi/go-recipes-book/pkg/config/env"
 	"github.com/gmaschi/go-recipes-book/pkg/tools/parseErrors"
 	"github.com/gmaschi/go-recipes-book/pkg/tools/password"
 	"github.com/gmaschi/go-recipes-book/pkg/tools/validators"
@@ -101,6 +106,14 @@ func (c *Controller) Update(ctx *gin.Context) {
 		return
 	}
 
+	authPayload := ctx.MustGet(authMiddleware.AuthorizationPayloadKey).(*tokenAuth.Payload)
+
+	if authPayload.Username != req.Username {
+		err := errors.New("user to update is not logged user")
+		ctx.JSON(http.StatusUnauthorized, parseErrors.ErrorResponse(err))
+		return
+	}
+
 	author, err := c.store.GetAuthor(ctx, req.Username)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -112,7 +125,7 @@ func (c *Controller) Update(ctx *gin.Context) {
 	}
 
 	updateArgs := db.UpdateAuthorParams{
-		Username:       author.Username,
+		Username:       authPayload.Username,
 		Email:          author.Email,
 		HashedPassword: author.HashedPassword,
 		UpdatedAt:      author.UpdatedAt,
@@ -171,6 +184,14 @@ func (c *Controller) Delete(ctx *gin.Context) {
 		return
 	}
 
+	authPayload := ctx.MustGet(authMiddleware.AuthorizationPayloadKey).(*tokenAuth.Payload)
+
+	if authPayload.Username != req.Username {
+		err := errors.New("account to delete does not belong to authenticated user")
+		ctx.JSON(http.StatusUnauthorized, parseErrors.ErrorResponse(err))
+		return
+	}
+
 	err := c.store.DeleteAuthor(ctx, req.Username)
 	if err != nil {
 		if pqError, ok := err.(*pq.Error); ok {
@@ -214,6 +235,53 @@ func (c *Controller) List(ctx *gin.Context) {
 	res := make([]authorModel.ListResponse, 0, k)
 	for _, author := range authors {
 		res = append(res, authorModel.ListResponse(author))
+	}
+
+	ctx.JSON(http.StatusOK, res)
+}
+
+func (c *Controller) Login(ctx *gin.Context) {
+	var req authorModel.LoginRequest
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, parseErrors.ErrorResponse(err))
+		return
+	}
+
+	author, err := c.store.GetAuthor(ctx, req.Username)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			ctx.JSON(http.StatusNotFound, parseErrors.ErrorResponse(err))
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, parseErrors.ErrorResponse(err))
+		return
+	}
+
+	err = password.CheckPassword(req.Password, author.HashedPassword)
+	if err != nil {
+		ctx.JSON(http.StatusUnauthorized, parseErrors.ErrorResponse(err))
+		return
+	}
+
+	maker, err := pasetoToken.NewPasetoMaker(env.SymmetricKey)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, parseErrors.ErrorResponse(err))
+		return
+	}
+
+	token, err := maker.CreateToken(author.Username, env.TokenDuration)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, parseErrors.ErrorResponse(err))
+		return
+	}
+
+	res := authorModel.LoginResponse{
+		AccessToken: token,
+		Username:    author.Username,
+		Email:       author.Email,
+		CreatedAt:   author.CreatedAt,
+		UpdatedAt:   author.UpdatedAt,
 	}
 
 	ctx.JSON(http.StatusOK, res)

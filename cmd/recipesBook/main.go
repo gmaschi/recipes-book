@@ -4,24 +4,24 @@ import (
 	"database/sql"
 	"github.com/gmaschi/go-recipes-book/internal/factories/book-recipe-factory"
 	db "github.com/gmaschi/go-recipes-book/internal/services/datastore/postgresql/recipes/sqlc"
+	"github.com/gmaschi/go-recipes-book/pkg/config/env"
 	"log"
 )
 
-const (
-	dbDriver      = "postgres"
-	dbSource      = "postgresql://root:root@localhost:5432/recipes?sslmode=disable"
-	serverAddress = "0.0.0.0:8080"
-)
 
 func main() {
-	conn, err := sql.Open(dbDriver, dbSource)
+	config := env.NewConfig(env.SymmetricKey, env.TokenDuration)
+	conn, err := sql.Open(config.DbDriver, config.DbSource)
 	if err != nil {
 		log.Fatalln("could not connect to database:", err)
 	}
 	store := db.NewStore(conn)
-	server := book_recipe_factory.New(store)
+	server, err := bookRecipeFactory.New(config, store)
+	if err != nil {
+		log.Fatalln("could not start server:", err)
+	}
 
-	err = server.Start(serverAddress)
+	err = server.Start(config.ServerAddress)
 	if err != nil {
 		log.Fatalln("cannot start server", err)
 	}

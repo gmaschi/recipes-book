@@ -2,9 +2,12 @@ package recipeController
 
 import (
 	"database/sql"
+	"errors"
 	"github.com/gin-gonic/gin"
+	authMiddleware "github.com/gmaschi/go-recipes-book/internal/controllers/middlewares/auth"
 	recipeModel "github.com/gmaschi/go-recipes-book/internal/models/recipe"
 	db "github.com/gmaschi/go-recipes-book/internal/services/datastore/postgresql/recipes/sqlc"
+	"github.com/gmaschi/go-recipes-book/pkg/auth/tokenAuth"
 	"github.com/gmaschi/go-recipes-book/pkg/tools/parseErrors"
 	"github.com/lib/pq"
 	"net/http"
@@ -36,8 +39,9 @@ func (c *Controller) Create(ctx *gin.Context) {
 		return
 	}
 
+	authPayload := ctx.MustGet(authMiddleware.AuthorizationPayloadKey).(*tokenAuth.Payload)
 	createArgs := db.CreateRecipeParams{
-		Author:      req.Author,
+		Author:      authPayload.Username,
 		Ingredients: req.Ingredients,
 		Steps:       req.Steps,
 	}
@@ -78,6 +82,14 @@ func (c *Controller) Recipe(ctx *gin.Context) {
 		return
 	}
 
+	authPayload := ctx.MustGet(authMiddleware.AuthorizationPayloadKey).(*tokenAuth.Payload)
+
+	if authPayload.Username != recipe.Author {
+		err := errors.New("recipe does not belong to authenticated user")
+		ctx.JSON(http.StatusUnauthorized, parseErrors.ErrorResponse(err))
+		return
+	}
+
 	res := recipeModel.GetResponse(recipe)
 
 	ctx.JSON(http.StatusOK, res)
@@ -99,6 +111,14 @@ func (c *Controller) Update(ctx *gin.Context) {
 			return
 		}
 		ctx.JSON(http.StatusInternalServerError, parseErrors.ErrorResponse(err))
+		return
+	}
+
+	authPayload := ctx.MustGet(authMiddleware.AuthorizationPayloadKey).(*tokenAuth.Payload)
+
+	if authPayload.Username != recipe.Author {
+		err := errors.New("recipe does not belong to authenticated user")
+		ctx.JSON(http.StatusUnauthorized, parseErrors.ErrorResponse(err))
 		return
 	}
 
@@ -138,7 +158,25 @@ func (c *Controller) Delete(ctx *gin.Context) {
 		return
 	}
 
-	err := c.store.DeleteRecipe(ctx, req.ID)
+	recipe, err := c.store.GetRecipe(ctx, req.ID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			ctx.JSON(http.StatusNotFound, parseErrors.ErrorResponse(err))
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, parseErrors.ErrorResponse(err))
+		return
+	}
+
+	authPayload := ctx.MustGet(authMiddleware.AuthorizationPayloadKey).(*tokenAuth.Payload)
+
+	if authPayload.Username != recipe.Author {
+		err := errors.New("recipe does not belong to authenticated user")
+		ctx.JSON(http.StatusUnauthorized, parseErrors.ErrorResponse(err))
+		return
+	}
+
+	err = c.store.DeleteRecipe(ctx, req.ID)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, parseErrors.ErrorResponse(err))
 		return
@@ -156,7 +194,10 @@ func (c *Controller) List(ctx *gin.Context) {
 		return
 	}
 
+	authPayload := ctx.MustGet(authMiddleware.AuthorizationPayloadKey).(*tokenAuth.Payload)
+
 	listArgs := db.ListRecipesParams{
+		Author: authPayload.Username,
 		Limit:  req.PageSize,
 		Offset: req.PageSize * (req.PageID - 1),
 	}

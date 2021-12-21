@@ -5,10 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	authMiddleware "github.com/gmaschi/go-recipes-book/internal/controllers/middlewares/auth"
 	"github.com/gmaschi/go-recipes-book/internal/factories/book-recipe-factory"
 	mockedstore "github.com/gmaschi/go-recipes-book/internal/mocks/datastore/postgresql/recipes"
 	recipeModel "github.com/gmaschi/go-recipes-book/internal/models/recipe"
 	db "github.com/gmaschi/go-recipes-book/internal/services/datastore/postgresql/recipes/sqlc"
+	"github.com/gmaschi/go-recipes-book/pkg/auth/tokenAuth"
+	"github.com/gmaschi/go-recipes-book/pkg/config/env"
 	"github.com/gmaschi/go-recipes-book/pkg/tools/password"
 	"github.com/gmaschi/go-recipes-book/pkg/tools/random"
 	"github.com/golang/mock/gomock"
@@ -46,19 +49,23 @@ func EqUpdateRecipesParams(arg db.UpdateRecipeParams) gomock.Matcher {
 }
 
 func TestCreate(t *testing.T) {
-	recipe := randomRecipe(t)
+	author := randomAuthor(t)
+	recipe := randomRecipe(author.Username)
 	testCases := []struct {
 		name          string
 		body          map[string]interface{}
+		setupAuth     func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker)
 		buildStubs    func(store *mockedstore.MockStore)
 		checkResponse func(t *testing.T, recorder *httptest.ResponseRecorder)
 	}{
 		{
 			name: "OK",
 			body: map[string]interface{}{
-				"author":      recipe.Author,
 				"ingredients": recipe.Ingredients,
 				"steps":       recipe.Steps,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, author.Username, time.Minute)
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				createArg := db.CreateRecipeParams{
@@ -77,12 +84,12 @@ func TestCreate(t *testing.T) {
 			},
 		},
 		{
-			name: "InvalidAuthorName",
+			name: "NoAuthorization",
 			body: map[string]interface{}{
-				"author":      "invalid-author#",
 				"ingredients": recipe.Ingredients,
 				"steps":       recipe.Steps,
 			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {},
 			buildStubs: func(store *mockedstore.MockStore) {
 				createArg := db.CreateRecipeParams{
 					Author:      recipe.Author,
@@ -94,15 +101,17 @@ func TestCreate(t *testing.T) {
 					Times(0)
 			},
 			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
-				require.Equal(t, http.StatusBadRequest, recorder.Code)
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
 			},
 		},
 		{
 			name: "InvalidIngredients",
 			body: map[string]interface{}{
-				"author":      recipe.Author,
 				"ingredients": []string{},
 				"steps":       recipe.Steps,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				createArg := db.CreateRecipeParams{
@@ -125,6 +134,9 @@ func TestCreate(t *testing.T) {
 				"ingredients": recipe.Ingredients,
 				"steps":       []string{},
 			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				createArg := db.CreateRecipeParams{
 					Author:      recipe.Author,
@@ -145,6 +157,9 @@ func TestCreate(t *testing.T) {
 				"author":      recipe.Author,
 				"ingredients": recipe.Ingredients,
 				"steps":       recipe.Steps,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				createArg := db.CreateRecipeParams{
@@ -168,6 +183,9 @@ func TestCreate(t *testing.T) {
 				"ingredients": recipe.Ingredients,
 				"steps":       recipe.Steps,
 			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				createArg := db.CreateRecipeParams{
 					Author:      recipe.Author,
@@ -193,7 +211,10 @@ func TestCreate(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			server := book_recipe_factory.New(store)
+			config := env.NewConfig(random.String(32), time.Minute)
+
+			server, err := bookRecipeFactory.New(config, store)
+			require.NoError(t, err)
 			recorder := httptest.NewRecorder()
 
 			url := "/recipes"
@@ -204,6 +225,7 @@ func TestCreate(t *testing.T) {
 			req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
 			require.NoError(t, err)
 
+			tc.setupAuth(t, req, server.TokenAuth)
 			server.Router.ServeHTTP(recorder, req)
 			tc.checkResponse(t, recorder)
 		})
@@ -211,17 +233,22 @@ func TestCreate(t *testing.T) {
 }
 
 func TestRecipe(t *testing.T) {
-	recipe := randomRecipe(t)
+	author := randomAuthor(t)
+	recipe := randomRecipe(author.Username)
 
 	testCases := []struct {
 		name          string
 		ID            int64
+		setupAuth     func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker)
 		buildStubs    func(store *mockedstore.MockStore)
 		checkResponse func(t *testing.T, recorder *httptest.ResponseRecorder)
 	}{
 		{
 			name: "OK",
 			ID:   recipe.ID,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				store.EXPECT().
 					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
@@ -234,8 +261,40 @@ func TestRecipe(t *testing.T) {
 			},
 		},
 		{
+			name:      "NoAuthorization",
+			ID:        recipe.ID,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {},
+			buildStubs: func(store *mockedstore.MockStore) {
+				store.EXPECT().
+					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
+					Times(0)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			},
+		},
+		{
+			name: "UnauthorizedUser",
+			ID:   recipe.ID,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, "unauthorizedUser", time.Minute)
+			},
+			buildStubs: func(store *mockedstore.MockStore) {
+				store.EXPECT().
+					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
+					Times(1).
+					Return(recipe, nil)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			},
+		},
+		{
 			name: "InvalidID",
 			ID:   0,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				store.EXPECT().
 					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
@@ -248,6 +307,9 @@ func TestRecipe(t *testing.T) {
 		{
 			name: "NotFound",
 			ID:   recipe.ID,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				store.EXPECT().
 					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
@@ -261,6 +323,9 @@ func TestRecipe(t *testing.T) {
 		{
 			name: "InternalError",
 			ID:   recipe.ID,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				store.EXPECT().
 					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
@@ -281,13 +346,17 @@ func TestRecipe(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			server := book_recipe_factory.New(store)
+			config := env.NewConfig(random.String(32), time.Minute)
+
+			server, err := bookRecipeFactory.New(config, store)
+			require.NoError(t, err)
 			recorder := httptest.NewRecorder()
 
 			url := fmt.Sprintf("/recipes/%v", tc.ID)
 			req, err := http.NewRequest(http.MethodGet, url, nil)
 			require.NoError(t, err)
 
+			tc.setupAuth(t, req, server.TokenAuth)
 			server.Router.ServeHTTP(recorder, req)
 			tc.checkResponse(t, recorder)
 		})
@@ -295,7 +364,8 @@ func TestRecipe(t *testing.T) {
 }
 
 func TestUpdate(t *testing.T) {
-	recipe := randomRecipe(t)
+	author := randomAuthor(t)
+	recipe := randomRecipe(author.Username)
 	updatedSteps := random.StringSlice(8)
 	updatedIngredients := random.StringSlice(6)
 	updatedTime := time.Now().UTC()
@@ -312,6 +382,7 @@ func TestUpdate(t *testing.T) {
 	testCases := []struct {
 		name          string
 		body          map[string]interface{}
+		setupAuth     func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker)
 		buildStubs    func(store *mockedstore.MockStore)
 		checkResponse func(t *testing.T, recorder *httptest.ResponseRecorder)
 	}{
@@ -321,6 +392,9 @@ func TestUpdate(t *testing.T) {
 				"id":          recipe.ID,
 				"ingredients": updatedIngredients,
 				"steps":       updatedSteps,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, author.Username, time.Minute)
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				arg := db.UpdateRecipeParams{
@@ -340,6 +414,62 @@ func TestUpdate(t *testing.T) {
 			},
 			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
 				require.Equal(t, http.StatusOK, recorder.Code)
+				requireBodyMatchUpdate(t, recorder.Body, updatedRecipe)
+			},
+		},
+		{
+			name: "NoAuthorization",
+			body: map[string]interface{}{
+				"id":          recipe.ID,
+				"ingredients": updatedIngredients,
+				"steps":       updatedSteps,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {},
+			buildStubs: func(store *mockedstore.MockStore) {
+				arg := db.UpdateRecipeParams{
+					ID:          recipe.ID,
+					Steps:       updatedSteps,
+					Ingredients: updatedIngredients,
+					UpdatedAt:   updatedTime,
+				}
+				store.EXPECT().
+					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
+					Times(0)
+				store.EXPECT().
+					UpdateRecipe(gomock.Any(), EqUpdateRecipesParams(arg)).
+					Times(0)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			},
+		},
+		{
+			name: "UnauthorizedUser",
+			body: map[string]interface{}{
+				"id":          recipe.ID,
+				"ingredients": updatedIngredients,
+				"steps":       updatedSteps,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, "unauthorizedUser", time.Minute)
+			},
+			buildStubs: func(store *mockedstore.MockStore) {
+				arg := db.UpdateRecipeParams{
+					ID:          recipe.ID,
+					Steps:       updatedSteps,
+					Ingredients: updatedIngredients,
+					UpdatedAt:   updatedTime,
+				}
+				store.EXPECT().
+					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
+					Times(1).
+					Return(recipe, nil)
+				store.EXPECT().
+					UpdateRecipe(gomock.Any(), EqUpdateRecipesParams(arg)).
+					Times(0)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
 			},
 		},
 		{
@@ -348,6 +478,9 @@ func TestUpdate(t *testing.T) {
 				"id":          0,
 				"ingredients": updatedIngredients,
 				"steps":       updatedSteps,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				store.EXPECT().
@@ -364,6 +497,9 @@ func TestUpdate(t *testing.T) {
 				"id":          recipe.ID,
 				"ingredients": updatedIngredients,
 				"steps":       updatedSteps,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				store.EXPECT().
@@ -382,6 +518,9 @@ func TestUpdate(t *testing.T) {
 				"ingredients": updatedIngredients,
 				"steps":       updatedSteps,
 			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				store.EXPECT().
 					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
@@ -398,6 +537,9 @@ func TestUpdate(t *testing.T) {
 				"id":          recipe.ID,
 				"ingredients": updatedIngredients,
 				"steps":       updatedSteps,
+			},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				arg := db.UpdateRecipeParams{
@@ -429,7 +571,10 @@ func TestUpdate(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			server := book_recipe_factory.New(store)
+			config := env.NewConfig(random.String(32), time.Minute)
+
+			server, err := bookRecipeFactory.New(config, store)
+			require.NoError(t, err)
 			recorder := httptest.NewRecorder()
 
 			data, err := json.Marshal(tc.body)
@@ -439,6 +584,7 @@ func TestUpdate(t *testing.T) {
 			req, err := http.NewRequest(http.MethodPatch, url, bytes.NewReader(data))
 			require.NoError(t, err)
 
+			tc.setupAuth(t, req, server.TokenAuth)
 			server.Router.ServeHTTP(recorder, req)
 			tc.checkResponse(t, recorder)
 		})
@@ -446,18 +592,27 @@ func TestUpdate(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	recipe := randomRecipe(t)
+	author := randomAuthor(t)
+	recipe := randomRecipe(author.Username)
 
 	testCases := []struct {
 		name          string
 		ID            int64
+		setupAuth     func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker)
 		buildStubs    func(store *mockedstore.MockStore)
 		checkResponse func(t *testing.T, recorder *httptest.ResponseRecorder)
 	}{
 		{
 			name: "OK",
 			ID:   recipe.ID,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
+				store.EXPECT().
+					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
+					Times(1).
+					Return(recipe, nil)
 				store.EXPECT().
 					DeleteRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
 					Times(1).
@@ -468,9 +623,88 @@ func TestDelete(t *testing.T) {
 			},
 		},
 		{
+			name: "NotFound",
+			ID:   recipe.ID,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
+			buildStubs: func(store *mockedstore.MockStore) {
+				store.EXPECT().
+					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
+					Times(1).
+					Return(db.Recipe{}, sql.ErrNoRows)
+				store.EXPECT().
+					DeleteRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
+					Times(0)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusNotFound, recorder.Code)
+			},
+		},
+		{
+			name: "GetInternalError",
+			ID:   recipe.ID,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
+			buildStubs: func(store *mockedstore.MockStore) {
+				store.EXPECT().
+					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
+					Times(1).
+					Return(db.Recipe{}, sql.ErrConnDone)
+				store.EXPECT().
+					DeleteRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
+					Times(0)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusInternalServerError, recorder.Code)
+			},
+		},
+		{
+			name:      "NoAuthorization",
+			ID:        recipe.ID,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {},
+			buildStubs: func(store *mockedstore.MockStore) {
+				store.EXPECT().
+					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
+					Times(0)
+				store.EXPECT().
+					DeleteRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
+					Times(0)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			},
+		},
+		{
+			name: "UnauthorizedUser",
+			ID:   recipe.ID,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, "unauthorizedUser", time.Minute)
+			},
+			buildStubs: func(store *mockedstore.MockStore) {
+				store.EXPECT().
+					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
+					Times(1).
+					Return(recipe, nil)
+				store.EXPECT().
+					DeleteRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
+					Times(0)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			},
+		},
+		{
 			name: "InvalidID",
 			ID:   -2,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
+				store.EXPECT().
+					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
+					Times(0)
 				store.EXPECT().
 					DeleteRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
 					Times(0)
@@ -480,9 +714,16 @@ func TestDelete(t *testing.T) {
 			},
 		},
 		{
-			name: "InternalError",
+			name: "DeleteInternalError",
 			ID:   recipe.ID,
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
+				store.EXPECT().
+					GetRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
+					Times(1).
+					Return(recipe, nil)
 				store.EXPECT().
 					DeleteRecipe(gomock.Any(), gomock.Eq(recipe.ID)).
 					Times(1).
@@ -502,13 +743,17 @@ func TestDelete(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			server := book_recipe_factory.New(store)
+			config := env.NewConfig(random.String(32), time.Minute)
+
+			server, err := bookRecipeFactory.New(config, store)
+			require.NoError(t, err)
 			recorder := httptest.NewRecorder()
 
 			url := fmt.Sprintf("/recipes/%v", tc.ID)
 			req, err := http.NewRequest(http.MethodDelete, url, nil)
 			require.NoError(t, err)
 
+			tc.setupAuth(t, req, server.TokenAuth)
 			server.Router.ServeHTTP(recorder, req)
 			tc.checkResponse(t, recorder)
 		})
@@ -517,10 +762,11 @@ func TestDelete(t *testing.T) {
 
 func TestList(t *testing.T) {
 	n := 10
+	author := randomAuthor(t)
 	var recipe db.Recipe
 	recipes := make([]db.Recipe, 0, n)
 	for i := 0; i < n; i++ {
-		recipe = randomRecipe(t)
+		recipe = randomRecipe(author.Username)
 		recipes = append(recipes, recipe)
 	}
 
@@ -533,6 +779,7 @@ func TestList(t *testing.T) {
 			pageID   int32
 			pageSize int32
 		}
+		setupAuth     func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker)
 		buildStubs    func(store *mockedstore.MockStore)
 		checkResponse func(t *testing.T, recorder *httptest.ResponseRecorder)
 	}{
@@ -542,8 +789,12 @@ func TestList(t *testing.T) {
 				pageID   int32
 				pageSize int32
 			}{pageID: int32(pageID), pageSize: int32(pageSize)},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				arg := db.ListRecipesParams{
+					Author: recipe.Author,
 					Limit:  int32(pageSize),
 					Offset: int32(pageSize * (pageID - 1)),
 				}
@@ -558,13 +809,38 @@ func TestList(t *testing.T) {
 			},
 		},
 		{
+			name: "NoAuthorization",
+			paginationData: struct {
+				pageID   int32
+				pageSize int32
+			}{pageID: int32(pageID), pageSize: int32(pageSize)},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {},
+			buildStubs: func(store *mockedstore.MockStore) {
+				arg := db.ListRecipesParams{
+					Author: recipe.Author,
+					Limit:  int32(pageSize),
+					Offset: int32(pageSize * (pageID - 1)),
+				}
+				store.EXPECT().
+					ListRecipes(gomock.Any(), gomock.Eq(arg)).
+					Times(0)
+			},
+			checkResponse: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			},
+		},
+		{
 			name: "InvalidPageID",
 			paginationData: struct {
 				pageID   int32
 				pageSize int32
 			}{pageID: int32(0), pageSize: int32(pageSize)},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				arg := db.ListRecipesParams{
+					Author: recipe.Author,
 					Limit:  int32(pageSize),
 					Offset: int32(pageSize * (pageID - 1)),
 				}
@@ -582,8 +858,12 @@ func TestList(t *testing.T) {
 				pageID   int32
 				pageSize int32
 			}{pageID: int32(pageID), pageSize: int32(15)},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				arg := db.ListRecipesParams{
+					Author: recipe.Author,
 					Limit:  int32(pageSize),
 					Offset: int32(pageSize * (pageID - 1)),
 				}
@@ -601,8 +881,12 @@ func TestList(t *testing.T) {
 				pageID   int32
 				pageSize int32
 			}{pageID: int32(pageID), pageSize: int32(pageSize)},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				arg := db.ListRecipesParams{
+					Author: recipe.Author,
 					Limit:  int32(pageSize),
 					Offset: int32(pageSize * (pageID - 1)),
 				}
@@ -621,8 +905,12 @@ func TestList(t *testing.T) {
 				pageID   int32
 				pageSize int32
 			}{pageID: int32(pageID), pageSize: int32(pageSize)},
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, recipe.Author, time.Minute)
+			},
 			buildStubs: func(store *mockedstore.MockStore) {
 				arg := db.ListRecipesParams{
+					Author: recipe.Author,
 					Limit:  int32(pageSize),
 					Offset: int32(pageSize * (pageID - 1)),
 				}
@@ -645,13 +933,17 @@ func TestList(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			server := book_recipe_factory.New(store)
+			config := env.NewConfig(random.String(32), time.Minute)
+
+			server, err := bookRecipeFactory.New(config, store)
+			require.NoError(t, err)
 			recorder := httptest.NewRecorder()
 
 			url := fmt.Sprintf("/recipes?page_id=%v&page_size=%v", tc.paginationData.pageID, tc.paginationData.pageSize)
 			req, err := http.NewRequest(http.MethodGet, url, nil)
 			require.NoError(t, err)
 
+			tc.setupAuth(t, req, server.TokenAuth)
 			server.Router.ServeHTTP(recorder, req)
 			tc.checkResponse(t, recorder)
 		})
@@ -676,12 +968,11 @@ func randomAuthor(t *testing.T) db.Author {
 	return author
 }
 
-func randomRecipe(t *testing.T) db.Recipe {
-	author := randomAuthor(t)
+func randomRecipe(authorName string) db.Recipe {
 	now := time.Now().UTC()
 	recipe := db.Recipe{
 		ID:          1,
-		Author:      author.Username,
+		Author:      authorName,
 		Steps:       random.StringSlice(5),
 		Ingredients: random.StringSlice(5),
 		CreatedAt:   now,
@@ -734,6 +1025,26 @@ func requireBodyMatchRecipe(t *testing.T, body *bytes.Buffer, recipe db.Recipe) 
 	require.Empty(t, gotRecipe.ID)
 }
 
+func requireBodyMatchUpdate(t *testing.T, body *bytes.Buffer, recipe db.Recipe) {
+	data, err := ioutil.ReadAll(body)
+	require.NoError(t, err)
+
+	var expectedUpdatedRecipeModel, gotRecipe recipeModel.UpdateResponse
+	jsonExpectedRecipe, err := json.Marshal(recipe)
+	require.NoError(t, err)
+	err = json.Unmarshal(jsonExpectedRecipe, &expectedUpdatedRecipeModel)
+
+	err = json.Unmarshal(data, &gotRecipe)
+	require.NoError(t, err)
+
+	require.Equal(t, expectedUpdatedRecipeModel.Author, gotRecipe.Author)
+	require.Equal(t, expectedUpdatedRecipeModel.Steps, gotRecipe.Steps)
+	require.Equal(t, expectedUpdatedRecipeModel.Ingredients, gotRecipe.Ingredients)
+	require.Equal(t, expectedUpdatedRecipeModel.CreatedAt, gotRecipe.CreatedAt)
+	require.Equal(t, expectedUpdatedRecipeModel.UpdatedAt, gotRecipe.UpdatedAt)
+	require.Empty(t, gotRecipe.ID)
+}
+
 func requireBodyMatchList(t *testing.T, body *bytes.Buffer, recipes []db.Recipe) {
 	data, err := ioutil.ReadAll(body)
 	require.NoError(t, err)
@@ -759,4 +1070,19 @@ func requireBodyMatchList(t *testing.T, body *bytes.Buffer, recipes []db.Recipe)
 		require.Equal(t, expectedListRecipesModel[i].CreatedAt, recipe.CreatedAt)
 		require.Equal(t, expectedListRecipesModel[i].UpdatedAt, recipe.UpdatedAt)
 	}
+}
+
+func addAuthorization(
+	t *testing.T,
+	request *http.Request,
+	tokenMaker tokenAuth.Maker,
+	authorizationType string,
+	username string,
+	duration time.Duration,
+) {
+	token, err := tokenMaker.CreateToken(username, duration)
+	require.NoError(t, err)
+
+	authorizationHeader := fmt.Sprintf("%s %s", authorizationType, token)
+	request.Header.Set(authMiddleware.AuthorizationHeaderKey, authorizationHeader)
 }

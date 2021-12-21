@@ -12,9 +12,10 @@ WHERE id = $1 LIMIT 1;
 
 -- name: ListRecipes :many
 SELECT * FROM recipes
+WHERE author = $1
 ORDER BY id
-LIMIT $1
-    OFFSET $2;
+LIMIT $2
+    OFFSET $3;
 
 -- name: UpdateRecipe :one
 UPDATE recipes SET (ingredients, steps, updated_at) = ($2, $3, $4)

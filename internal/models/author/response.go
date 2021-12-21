@@ -34,4 +34,13 @@ type (
 		CreatedAt      time.Time `json:"created_at"`
 		UpdatedAt      time.Time `json:"updated_at"`
 	}
+
+	LoginResponse struct {
+		AccessToken    string    `json:"access_token"`
+		Username       string    `json:"username"`
+		HashedPassword string    `json:"-"`
+		Email          string    `json:"email"`
+		CreatedAt      time.Time `json:"created_at"`
+		UpdatedAt      time.Time `json:"updated_at"`
+	}
 )

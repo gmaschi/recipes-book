@@ -55,13 +55,13 @@ func TestUpdateRecipe(t *testing.T) {
 	recipe := createRandomRecipe(t)
 
 	updateArgs := UpdateRecipeParams{
-		ID: recipe.ID,
+		ID:          recipe.ID,
 		Ingredients: random.StringSlice(4),
-		Steps: random.StringSlice(5),
-		UpdatedAt: time.Now().UTC(),
+		Steps:       random.StringSlice(5),
+		UpdatedAt:   time.Now().UTC(),
 	}
 
-	updatedRecipe, err := testQueries.UpdateRecipe(context.Background(),updateArgs)
+	updatedRecipe, err := testQueries.UpdateRecipe(context.Background(), updateArgs)
 	require.NoError(t, err)
 	require.NotEmpty(t, updatedRecipe)
 
@@ -86,14 +86,16 @@ func TestDeleteRecipe(t *testing.T) {
 
 func TestListRecipes(t *testing.T) {
 	n := 10
+	var lastRecipe Recipe
 	for i := 0; i < n; i++ {
-		createRandomRecipe(t)
+		lastRecipe = createRandomRecipe(t)
 	}
 
 	limit := 5
-	offset := 3
+	offset := 0
 
 	listArgs := ListRecipesParams{
+		Author: lastRecipe.Author,
 		Limit:  int32(limit),
 		Offset: int32(offset),
 	}
@@ -102,9 +104,8 @@ func TestListRecipes(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, recipesList)
 
-	require.Len(t, recipesList, limit)
-
 	for _, recipe := range recipesList {
 		require.NotEmpty(t, recipe)
+		require.Equal(t, lastRecipe.Author, recipe.Author)
 	}
 }
