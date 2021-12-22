@@ -27,7 +27,7 @@ func NewConfig() (Config, error) {
 		return Config{}, err
 	}
 
-	envStruct, nil := readEnvContent(dirWithEnv)
+	envStruct, err := readEnvContent(dirWithEnv)
 	if err != nil {
 		return Config{}, err
 	}
@@ -121,13 +121,14 @@ func readEnvContent(dwe string) (Config, error) {
 		if len(split) != 2 {
 			return envStruct, err
 		}
-		transformedSlice[i] = `"` + split[0] + `"` + ":" + `"` + split[1] + `"`
+		transformedSlice[i] = fmt.Sprintf(`"%v":"%v"`,split[0], split[1])
 	}
-	transformedString := "{" + strings.Join(transformedSlice, ",") + "}"
+	transformedString := fmt.Sprintf(`{%v}`, strings.Join(transformedSlice, ","))
 
 	err = json.Unmarshal([]byte(transformedString), &envStruct)
 	if err != nil {
 		return envStruct, err
 	}
+	fmt.Println(envStruct)
 	return envStruct, nil
 }
