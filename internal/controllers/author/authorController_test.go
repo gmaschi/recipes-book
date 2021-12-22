@@ -207,7 +207,8 @@ func TestCreate(t *testing.T) {
 			tc.buildStubs(store)
 
 			// start test server and send request
-			config := env.NewConfig(random.String(32), time.Minute)
+			config, err := env.NewConfig()
+			require.NoError(t, err)
 
 			server, err := bookRecipeFactory.New(config, store)
 			require.NoError(t, err)
@@ -297,7 +298,8 @@ func TestAuthor(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			config := env.NewConfig(random.String(32), time.Minute)
+			config, err := env.NewConfig()
+			require.NoError(t, err)
 
 			server, err := bookRecipeFactory.New(config, store)
 			require.NoError(t, err)
@@ -617,7 +619,8 @@ func TestUpdate(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			config := env.NewConfig(random.String(32), time.Minute)
+			config, err := env.NewConfig()
+			require.NoError(t, err)
 
 			server, err := bookRecipeFactory.New(config, store)
 			require.NoError(t, err)
@@ -679,7 +682,7 @@ func TestDelete(t *testing.T) {
 		{
 			name:           "UnauthorizedUser",
 			authorUsername: author.Username,
-			setupAuth:      func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
+			setupAuth: func(t *testing.T, request *http.Request, tokenMaker tokenAuth.Maker) {
 				addAuthorization(t, request, tokenMaker, authMiddleware.AuthorizationTypeBearer, "unauthorizedUser", time.Minute)
 			},
 			buildStubs: func(store *mockedstore.MockStore) {
@@ -748,14 +751,14 @@ func TestDelete(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			config := env.NewConfig(random.String(32), time.Minute)
+			config, err := env.NewConfig()
+			require.NoError(t, err)
 
 			server, err := bookRecipeFactory.New(config, store)
 			require.NoError(t, err)
 			recorder := httptest.NewRecorder()
 
 			url := fmt.Sprintf("/authors/%s", tc.authorUsername)
-			fmt.Println(url)
 			req, err := http.NewRequest(http.MethodDelete, url, nil)
 			require.NoError(t, err)
 
@@ -896,7 +899,8 @@ func TestList(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			config := env.NewConfig(random.String(32), time.Minute)
+			config, err := env.NewConfig()
+			require.NoError(t, err)
 
 			server, err := bookRecipeFactory.New(config, store)
 			require.NoError(t, err)
