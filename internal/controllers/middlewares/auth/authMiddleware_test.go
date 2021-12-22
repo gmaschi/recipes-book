@@ -7,7 +7,6 @@ import (
 	bookRecipeFactory "github.com/gmaschi/go-recipes-book/internal/factories/book-recipe-factory"
 	"github.com/gmaschi/go-recipes-book/pkg/auth/tokenAuth"
 	"github.com/gmaschi/go-recipes-book/pkg/config/env"
-	"github.com/gmaschi/go-recipes-book/pkg/tools/random"
 	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
@@ -68,7 +67,8 @@ func TestAuthMiddleware(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			config := env.NewConfig(random.String(32), time.Minute)
+			config, err := env.NewConfig()
+			require.NoError(t, err)
 			server, err := bookRecipeFactory.New(config, nil)
 			require.NoError(t, err)
 

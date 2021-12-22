@@ -5,16 +5,21 @@ import (
 	"github.com/gmaschi/go-recipes-book/internal/factories/book-recipe-factory"
 	db "github.com/gmaschi/go-recipes-book/internal/services/datastore/postgresql/recipes/sqlc"
 	"github.com/gmaschi/go-recipes-book/pkg/config/env"
+	_ "github.com/lib/pq"
 	"log"
 )
 
-
 func main() {
-	config := env.NewConfig(env.SymmetricKey, env.TokenDuration)
+	config, err := env.NewConfig()
+	if err != nil {
+		log.Fatalln("cannot load env variables")
+	}
+
 	conn, err := sql.Open(config.DbDriver, config.DbSource)
 	if err != nil {
 		log.Fatalln("could not connect to database:", err)
 	}
+
 	store := db.NewStore(conn)
 	server, err := bookRecipeFactory.New(config, store)
 	if err != nil {

@@ -211,7 +211,8 @@ func TestCreate(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			config := env.NewConfig(random.String(32), time.Minute)
+			config, err := env.NewConfig()
+			require.NoError(t, err)
 
 			server, err := bookRecipeFactory.New(config, store)
 			require.NoError(t, err)
@@ -346,7 +347,8 @@ func TestRecipe(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			config := env.NewConfig(random.String(32), time.Minute)
+			config, err := env.NewConfig()
+			require.NoError(t, err)
 
 			server, err := bookRecipeFactory.New(config, store)
 			require.NoError(t, err)
@@ -571,7 +573,8 @@ func TestUpdate(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			config := env.NewConfig(random.String(32), time.Minute)
+			config, err := env.NewConfig()
+			require.NoError(t, err)
 
 			server, err := bookRecipeFactory.New(config, store)
 			require.NoError(t, err)
@@ -743,7 +746,8 @@ func TestDelete(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			config := env.NewConfig(random.String(32), time.Minute)
+			config, err := env.NewConfig()
+			require.NoError(t, err)
 
 			server, err := bookRecipeFactory.New(config, store)
 			require.NoError(t, err)
@@ -933,7 +937,8 @@ func TestList(t *testing.T) {
 			store := mockedstore.NewMockStore(ctrl)
 			tc.buildStubs(store)
 
-			config := env.NewConfig(random.String(32), time.Minute)
+			config, err := env.NewConfig()
+			require.NoError(t, err)
 
 			server, err := bookRecipeFactory.New(config, store)
 			require.NoError(t, err)

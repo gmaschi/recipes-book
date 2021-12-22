@@ -264,13 +264,15 @@ func (c *Controller) Login(ctx *gin.Context) {
 		return
 	}
 
-	maker, err := pasetoToken.NewPasetoMaker(env.SymmetricKey)
+	config, err := env.NewConfig()
+
+	maker, err := pasetoToken.NewPasetoMaker(config.TokenSymmetricKey)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, parseErrors.ErrorResponse(err))
 		return
 	}
 
-	token, err := maker.CreateToken(author.Username, env.TokenDuration)
+	token, err := maker.CreateToken(author.Username, time.Duration(config.TokenDuration) * time.Minute)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, parseErrors.ErrorResponse(err))
 		return
